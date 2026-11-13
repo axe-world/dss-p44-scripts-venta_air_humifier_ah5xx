@@ -1,0 +1,309 @@
+// Venta Original Connect - p44script, Telemetry API v3
+var venta_ip = '192.168.1.1'   //ANPASSEN !!!
+var venta_base = 'http://' + venta_ip
+var busy = false
+
+// Letzte gueltige API-Zustaende; beim ersten Abruf keine Events erzeugen.
+glob ventaAH500LastStatus
+ventaAH500LastStatus = null
+
+// POST ohne Daten; Antwort: {Header, Action, Info, Measure}
+function venta_read() {
+  var r = httprequest({url:venta_base+'/api/telemetry', method:'POST', timeout:8, withmeta:true})
+  if (!isvalid(r) || r.status!=200) throw 'Venta: /api/telemetry HTTP-Fehler'
+  var d = json(r.data)
+  if (!isvalid(d) || !isvalid(d.Action) || !isvalid(d.Measure)) throw 'Venta: ungueltige Telemetry-Antwort'
+  if (!isok(d.Measure.Temperature) || !isok(d.Measure.Humidity)) throw 'Venta: Temperature/Humidity fehlen'
+  if (!isok(d.Action.Power) || !isok(d.Action.FanSpeed) ||
+      !isok(d.Action.Automatic) || !isok(d.Action.SleepMode)) throw 'Venta: Steuerungsfelder fehlen'
+  return d
+}
+
+// Objekt wird von httprequest automatisch als application/json uebertragen.
+// Die API erwartet Action:'control'; fuer manuelle Befehle werden
+// Power, Automatic, SleepMode und FanSpeed vollstaendig mitgesendet.
+function venta_write(payload) {
+  payload.Action = 'control'
+  var r = httprequest({url:venta_base+'/api/telemetry?request=set',
+    method:'POST', data:payload, timeout:8, withmeta:true})
+  if (!isvalid(r) || r.status!=200) throw 'Venta: control HTTP-Fehler'
+  // Wenn vorhanden, Antwort fuer Plausibilitaet pruefen.
+  if (isvalid(r.data)) {
+    var d = json(r.data)
+    if (isvalid(d) && isvalid(d.Action)) return d
+  }
+  return null
+}
+
+// Ein fehlendes oder noch nicht registriertes Event blockiert weder
+// andere Events noch die Aktualisierung der Sensoren und States.
+function venta_event(eventId) {
+  try {
+    message({message:'pushNotification',events:[eventId]})
+    log(5, 'Venta Event gesendet: %s', eventId)
+  }
+  catch as e {
+    log(3, 'Venta Event NICHT REGISTRIERT oder abgelehnt: %s (%s)', eventId, e)
+  }
+}
+
+// Jeder State wird unabhaengig gesendet. Keine dynamischen
+// Objekt-Zuweisungen wie errorFlags[id] = true (NotLValue in P44Script).
+function venta_state(id, value) {
+  try {
+    if (id=='Eingeschaltet') message({message:'pushNotification',statechange:{'Eingeschaltet':value}})
+    else if (id=='Schlafmodus') message({message:'pushNotification',statechange:{'Schlafmodus':value}})
+    else if (id=='Automatikmodus') message({message:'pushNotification',statechange:{'Automatikmodus':value}})
+    else if (id=='Fan-Geschwindigkeit') message({message:'pushNotification',statechange:{'Fan-Geschwindigkeit':value}})
+    else if (id=='Zielfeuchtigkeit') message({message:'pushNotification',statechange:{'Zielfeuchtigkeit':value}})
+    else if (id=='Reinigung') message({message:'pushNotification',statechange:{'Reinigung':value}})
+    else if (id=='Wasserstand') message({message:'pushNotification',statechange:{'Wasserstand':value}})
+  }
+  catch as e {
+    log(3, 'Venta State abgelehnt: %s=%s (%s)', id, value, e)
+  }
+}
+
+function venta_report(d) {
+  var a = d.Action
+  // Sensoren anhand ihrer IDs adressieren; Fehler je Sensor isolieren.
+  // So blockiert ein Sensorfehler die States/Events nicht.
+  try {
+    message({message:'sensor', id:'temperature', value:d.Measure.Temperature})
+  }
+  catch as e {
+    log(3, 'Venta Sensor temperature (ID) fehlgeschlagen: %s', e)
+  }
+  try {
+    message({message:'sensor', id:'humidity', value:d.Measure.Humidity})
+  }
+  catch as e {
+    log(3, 'Venta Sensor humidity (ID) fehlgeschlagen: %s', e)
+  }
+
+  var power = a.Power==1
+  var sleep = a.SleepMode==1
+  var automatic = a.Automatic==1
+  var fan = a.FanSpeed
+  var target = a.TargetHum
+  if (!isok(target)) throw 'Venta: TargetHum fehlt in Telemetry-Antwort'
+
+  var powerText = 'Aus'
+  var sleepText = 'Aus'
+  var autoText = 'Aus'
+  if (power) powerText = 'Ein'
+  if (sleep) sleepText = 'Ein'
+  if (automatic) autoText = 'Ein'
+
+  // digitalSTROM Mobile App: Nach bisherigen Tests werden hier nur
+  // Enumeration-States angezeigt. Zielfeuchtigkeit als String 30..70 senden.
+  // Wichtig: Bei erstem Polling NICHT auf Felder eines null-Objekts zugreifen.
+  var firstReport = ventaAH500LastStatus == null
+  var targetText = string(target)
+  if (firstReport) {
+    // Beim Scriptstart alle Basis-States einmal initial melden.
+    venta_state('Eingeschaltet', powerText)
+    venta_state('Schlafmodus', sleepText)
+    venta_state('Automatikmodus', autoText)
+    if (fan==1 || fan==2 || fan==3) venta_state('Fan-Geschwindigkeit', string(fan))
+    else log(4, 'Venta: unerwarteter FanSpeed-Wert %s', fan)
+    venta_state('Zielfeuchtigkeit', targetText)
+  }
+  else {
+    // Danach nur die States melden, die sich wirklich geaendert haben.
+    if (ventaAH500LastStatus.Power!=a.Power) venta_state('Eingeschaltet', powerText)
+    if (ventaAH500LastStatus.SleepMode!=a.SleepMode) venta_state('Schlafmodus', sleepText)
+    if (ventaAH500LastStatus.Automatic!=a.Automatic) venta_state('Automatikmodus', autoText)
+    if (ventaAH500LastStatus.FanSpeed!=fan) {
+      if (fan==1 || fan==2 || fan==3) venta_state('Fan-Geschwindigkeit', string(fan))
+      else log(4, 'Venta: unerwarteter FanSpeed-Wert %s', fan)
+    }
+    if (ventaAH500LastStatus.TargetHum!=targetText) venta_state('Zielfeuchtigkeit', targetText)
+  }
+
+  // Wartung: ServiceT >= ServiceMax => Reinigung empfohlen.
+  // Warnings==1 bedeutet laut inoffizieller Venta-API meistens
+  // niedrigen Wasserstand, kann aber andere Warnungen enthalten.
+  var cleaningValid = false
+  var cleaningDue = false
+  var waterValid = false
+  var waterLow = false
+  if (isvalid(d.Info)) {
+    var serviceMax = d.Info.ServiceMax
+    if (!isok(serviceMax) || serviceMax<=0) {
+      serviceMax = 2016
+      log(3, 'Venta: ServiceMax fehlt/ungueltig; verwende Default 2016 (AH500 pruefen)')
+    }
+    if (isvalid(d.Info.ServiceT)) {
+      cleaningValid = true
+      cleaningDue = d.Info.ServiceT>=serviceMax
+      var cleaningText = 'OK'
+      if (cleaningDue) cleaningText = 'Empfohlen'
+      if (firstReport) venta_state('Reinigung', cleaningText)
+      else if (!isok(ventaAH500LastStatus.CleaningDue)) venta_state('Reinigung', cleaningText)
+      else if (ventaAH500LastStatus.CleaningDue!=cleaningDue) venta_state('Reinigung', cleaningText)
+    }
+    else log(4, 'Venta: ServiceT fehlt; Reinigung nicht aktualisiert')
+
+    if (isok(d.Info.Warnings)) {
+      if (d.Info.Warnings==0 || d.Info.Warnings==1) {
+        waterValid = true
+        waterLow = d.Info.Warnings==1
+        var waterChanged = firstReport
+        if (!firstReport) {
+          if (!isok(ventaAH500LastStatus.WaterLow)) waterChanged = true
+          else if (ventaAH500LastStatus.WaterLow!=waterLow) waterChanged = true
+        }
+        if (waterChanged) {
+          if (waterLow) venta_state('Wasserstand', 'Nachfüllen')
+          else venta_state('Wasserstand', 'OK')
+        }
+      }
+      else log(4, 'Venta: Info.Warnings=%s nicht eindeutig; Wasserstand nicht aktualisiert', d.Info.Warnings)
+    }
+    else log(4, 'Venta: Info.Warnings fehlt; Wasserstand nicht aktualisiert')
+  }
+  else log(4, 'Venta: Info fehlt; Wartungsstates nicht aktualisiert')
+
+  if (ventaAH500LastStatus != null) {
+    if (ventaAH500LastStatus.Power!=a.Power) {
+      if (power) venta_event('Gerät eingeschaltet')
+      else venta_event('Gerät ausgeschaltet')
+    }
+    // Fan-Event nur bei eingeschalteter Anlage und wirksamer Stufenaenderung.
+    if (power && (ventaAH500LastStatus.FanSpeed!=fan || ventaAH500LastStatus.Power!=a.Power)) {
+      if (fan==1) venta_event('Fanspeed 1')
+      else if (fan==2) venta_event('Fanspeed 2')
+      else if (fan==3) venta_event('Fanspeed 3')
+    }
+    if (ventaAH500LastStatus.SleepMode!=a.SleepMode) {
+      if (sleep) venta_event('Schlafmodus ein')
+      else venta_event('Schlafmodus aus')
+    }
+    if (ventaAH500LastStatus.Automatic!=a.Automatic) {
+      if (automatic) venta_event('Automatikmodus ein')
+      else venta_event('Automatikmodus aus')
+    }
+    // Nur den Uebergang zu Reinigung/Wasser nachfuellen als Event senden.
+    // Event-ID bewusst verschieden von State-ID: keine Namenskollision in P44/dSS.
+    if (cleaningValid && isok(ventaAH500LastStatus.CleaningDue)) {
+      if (cleaningDue && !ventaAH500LastStatus.CleaningDue) venta_event('Reinigung erforderlich')
+    }
+    if (waterValid && isok(ventaAH500LastStatus.WaterLow)) {
+      if (waterLow && !ventaAH500LastStatus.WaterLow) venta_event('Wasserstand nachfüllen')
+    }
+  }
+
+  // Erst nach der Eventpruefung speichern (keine Events beim Scriptstart).
+  if (ventaAH500LastStatus == null) {
+    ventaAH500LastStatus = {}
+  }
+  ventaAH500LastStatus.Power = a.Power
+  ventaAH500LastStatus.FanSpeed = fan
+  ventaAH500LastStatus.SleepMode = a.SleepMode
+  ventaAH500LastStatus.Automatic = a.Automatic
+  ventaAH500LastStatus.TargetHum = targetText
+  if (cleaningValid) ventaAH500LastStatus.CleaningDue = cleaningDue
+  if (waterValid) ventaAH500LastStatus.WaterLow = waterLow
+  message({message:'opstate',level:100,text:'Venta API OK'})
+}
+
+function venta_execute(action, d) {
+  var a = d.Action
+  var p = { Power:a.Power, Automatic:a.Automatic,
+            SleepMode:a.SleepMode, FanSpeed:a.FanSpeed }
+
+  if (action=='ActPowerOn') {
+    if (a.Power==1) return
+    p.Power = 1
+  }
+  else if (action=='ActPowerOff') {
+    if (a.Power==0) return
+    p.Power = 0
+  }
+  else if (action=='ActAutomatic') {
+    if (a.Power==1 && a.Automatic==1) return
+    // Auto-Modus: dokumentiertes Minimal-Payload.
+    p = {Power:1, Automatic:1}
+  }
+  else if (action=='ActSleep') {
+    if (a.Power==1 && a.SleepMode==1 && a.Automatic==0 && a.FanSpeed==1) return
+    p.Power = 1
+    p.Automatic = 0
+    p.SleepMode = 1
+    p.FanSpeed = 1
+  }
+  else if (action=='ActFanSpeed1' || action=='ActFanSpeed2' || action=='ActFanSpeed3') {
+    var speed = 1
+    if (action=='ActFanSpeed2') speed = 2
+    if (action=='ActFanSpeed3') speed = 3
+    if (a.Power==1 && a.Automatic==0 && a.SleepMode==0 && a.FanSpeed==speed) return
+    p.Power = 1
+    p.Automatic = 0
+    p.SleepMode = 0
+    p.FanSpeed = speed
+  }
+  else throw 'Unbekannte Venta-Aktion'
+
+  log(5, 'Venta control %s: %s', action, p)
+  venta_write(p)
+}
+
+function knownAction(a) {
+  return a=='ActPowerOn' || a=='ActPowerOff' || a=='ActAutomatic' ||
+    a=='ActSleep' || a=='ActFanSpeed1' || a=='ActFanSpeed2' || a=='ActFanSpeed3'
+}
+
+// Alle 60 s pollen; States nur bei Aenderung, Sensoren weiterhin melden.
+on (every(0:01)) {
+  if (!busy) {
+    busy = true
+    try { venta_report(venta_read()) }
+    catch as e {
+      log(3, 'Venta Polling fehlgeschlagen: %s', e)
+      message({message:'opstate',level:0,text:'Venta API Fehler'})
+      try { message({message:'sensor', id:'temperature', value:null}) } catch as sensorError { log(4, 'Venta temperature null: %s', sensorError) }
+      try { message({message:'sensor', id:'humidity', value:null}) } catch as sensorError { log(4, 'Venta humidity null: %s', sensorError) }
+    }
+    busy = false
+  }
+}
+
+// Schnell bestaetigen; HTTP-Befehl danach separat abarbeiten.
+on (message()) as m {
+  if (m.message=='invokeAction') {
+    log(3, 'Venta invokeAction empfangen: %s', m.action)
+    if (busy) {
+      message({message:'confirmAction',action:m.action,errorcode:1,errortext:'Venta beschaeftigt'})
+    }
+    else if (!knownAction(m.action)) {
+      message({message:'confirmAction',action:m.action,errorcode:1,errortext:'Unbekannte Venta-Aktion'})
+    }
+    else {
+      busy = true
+      // Wie bei Klafs: sofort Auftrag bestaetigen, danach HTTP im concurrent Thread.
+      message({message:'confirmAction',action:m.action,errorcode:0})
+      concurrent passing actionId=m.action {
+        try {
+          var d = venta_read()
+          venta_execute(actionId, d)
+          // Dem Venta Zeit geben, die neue Einstellung zu uebernehmen.
+          delay(1)
+          // Unabhaengiger, frischer API-Poll nach jeder Aktion.
+          var updated = venta_read()
+          // Sensoren erneut melden; States nur bei Wertwechsel pushen.
+          // Events weiterhin ausschliesslich bei Zustandswechseln.
+          venta_report(updated)
+          log(5, 'Venta Aktion %s ausgefuehrt; Telemetry neu abgefragt', actionId)
+        }
+        catch as e {
+          log(3, 'Venta Aktion %s fehlgeschlagen: %s', actionId, e)
+          message({message:'opstate',level:0,text:'Venta Aktion fehlgeschlagen'})
+        }
+        busy = false
+      }
+    }
+  }
+}
+
+return true

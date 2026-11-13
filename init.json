@@ -1,0 +1,211 @@
+{
+  "message": "init",
+  "protocol": "json",
+  "name": "Venta AH500 Connect",
+  "vendorname": "Venta",
+  "modelname": "AH500 Connect",
+  "colorclass": 8,
+  "output": "basic",
+  "group": 8,
+  "sensors": [
+    {
+      "id": "temperature",
+      "sensortype": 1,
+      "usage": 1,
+      "group": 3,
+      "min": -10,
+      "max": 60,
+      "resolution": 1,
+      "updateinterval": 60,
+      "alivesigninterval": 180,
+      "hardwarename": "Temperatur"
+    },
+    {
+      "id": "humidity",
+      "sensortype": 2,
+      "usage": 1,
+      "group": 3,
+      "min": 0,
+      "max": 100,
+      "resolution": 1,
+      "updateinterval": 60,
+      "alivesigninterval": 180,
+      "hardwarename": "Luftfeuchtigkeit"
+    }
+  ],
+  "dynamicactions": {
+    "ActPowerOn": {
+      "title": "01-Einschalten",
+      "description": "Venta AH500 einschalten"
+    },
+    "ActPowerOff": {
+      "title": "02-Ausschalten",
+      "description": "Venta AH500 ausschalten"
+    },
+    "ActAutomatic": {
+      "title": "03-Automatikmodus",
+      "description": "Automatikmodus einschalten"
+    },
+    "ActSleep": {
+      "title": "04-Schlafmodus",
+      "description": "Schlafmodus einschalten"
+    },
+    "ActFanSpeed1": {
+      "title": "05-Fanspeed 1",
+      "description": "Ventilatorstufe 1"
+    },
+    "ActFanSpeed2": {
+      "title": "06-Fanspeed 2",
+      "description": "Ventilatorstufe 2"
+    },
+    "ActFanSpeed3": {
+      "title": "07-Fanspeed 3",
+      "description": "Ventilatorstufe 3"
+    }
+  },
+  "states": {
+    "Eingeschaltet": {
+      "type": "enumeration",
+      "description": "Eingeschaltet",
+      "values": [
+        "!Aus",
+        "Ein"
+      ]
+    },
+    "Fan-Geschwindigkeit": {
+      "type": "enumeration",
+      "description": "Fan-Geschwindigkeit",
+      "values": [
+        "!1",
+        "2",
+        "3"
+      ]
+    },
+    "Schlafmodus": {
+      "type": "enumeration",
+      "description": "Schlafmodus",
+      "values": [
+        "!Aus",
+        "Ein"
+      ]
+    },
+    "Automatikmodus": {
+      "type": "enumeration",
+      "description": "Automatikmodus",
+      "values": [
+        "!Aus",
+        "Ein"
+      ]
+    },
+    "Zielfeuchtigkeit": {
+      "type": "enumeration",
+      "description": "Zielfeuchtigkeit",
+      "values": [
+        "!30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53",
+        "54",
+        "55",
+        "56",
+        "57",
+        "58",
+        "59",
+        "60",
+        "61",
+        "62",
+        "63",
+        "64",
+        "65",
+        "66",
+        "67",
+        "68",
+        "69",
+        "70"
+      ]
+    },
+    "Reinigung": {
+      "type": "enumeration",
+      "description": "Reinigung",
+      "values": [
+        "!OK",
+        "Empfohlen"
+      ]
+    },
+    "Wasserstand": {
+      "type": "enumeration",
+      "description": "Wasserstand",
+      "values": [
+        "!OK",
+        "Nachfüllen"
+      ]
+    }
+  },
+  "events": {
+    "Gerät eingeschaltet": {
+      "type": "boolean",
+      "description": "Gerät eingeschaltet"
+    },
+    "Gerät ausgeschaltet": {
+      "type": "boolean",
+      "description": "Gerät ausgeschaltet"
+    },
+    "Fanspeed 1": {
+      "type": "boolean",
+      "description": "Fanspeed 1"
+    },
+    "Fanspeed 2": {
+      "type": "boolean",
+      "description": "Fanspeed 2"
+    },
+    "Fanspeed 3": {
+      "type": "boolean",
+      "description": "Fanspeed 3"
+    },
+    "Schlafmodus ein": {
+      "type": "boolean",
+      "description": "Schlafmodus ein"
+    },
+    "Schlafmodus aus": {
+      "type": "boolean",
+      "description": "Schlafmodus aus"
+    },
+    "Automatikmodus ein": {
+      "type": "boolean",
+      "description": "Automatikmodus ein"
+    },
+    "Automatikmodus aus": {
+      "type": "boolean",
+      "description": "Automatikmodus aus"
+    },
+    "Wasserstand nachfüllen": {
+      "type": "boolean",
+      "description": "Wasserstand nachfüllen"
+    },
+    "Reinigung erforderlich": {
+      "type": "boolean",
+      "description": "Reinigung erforderlich"
+    }
+  },
+  "oemmodelguid": "gs1:(01)1234567890123"
+}
